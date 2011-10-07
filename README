@@ -1,0 +1,11 @@
+
+InsertBuffer is an asynchronous queue in front of a MySQL server.  It's
+designed to buffer high volume INSERT statements to work around temporary
+I/O bottlenecks.
+
+Requires Python 2.7, MySQL-Python and pysignalfd (provided as a Git
+submodule).  Run `make boot' if you have virtualenv installed.
+
+(Note that insertbufferd.py and insertbuffer.php are licensed under
+different terms; the former is GPL and the latter is MIT.)
+

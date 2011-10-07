@@ -1,0 +1,3 @@
+[submodule "signalfd"]
+	path = signalfd
+	url = git://github.com/dynamoid/pysignalfd.git
