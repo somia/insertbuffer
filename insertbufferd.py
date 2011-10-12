@@ -244,8 +244,8 @@ class Database(object):
 
 			try:
 				with contextlib.closing(self.conn.cursor()) as cursor:
-					cursor.execute(item.query)
-					return True
+					if cursor.execute(item.query) > 0:
+						return True
 
 			except Exception as e:
 				syslog.syslog(syslog.LOG_ERR, str(e))
