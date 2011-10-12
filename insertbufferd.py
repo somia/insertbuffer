@@ -175,71 +175,86 @@ class Signaler(signalfd.async.dispatcher):
 	def user_insists(self):
 		return self.__count > 1
 
-def insert(queue, conn, params, signaler, stats):
-	while True:
-		item = queue.get()
+class Database(object):
 
-		if item.terminate:
-			syslog.syslog(syslog.LOG_INFO, "Terminated")
+	def __init__(self, params, queue, stats, signaler):
+		self.params = params
+		self.queue = queue
+		self.stats = stats
+		self.signaler = signaler
 
-			queue.task_done()
-			break
+		self.connect()
 
-		assert item.database == params["db"]
+	@property
+	def connected(self):
+		return self.conn is not None
 
-		ok = False
+	def connect(self):
+		return mysql.connect(**self.params)
 
-		for i in xrange(2):
-			if conn is None:
-				while True:
-					try:
-						conn = mysql.connect(**params)
-						break
-
-					except Exception as e:
-						syslog.syslog(syslog.LOG_ERR, str(e))
-
-						if signaler.user_insists:
-							syslog.syslog(syslog.LOG_INFO, "Giving up due to persistent user")
-							syslog.syslog(syslog.LOG_ERR, "Could not execute query: %s" % item.query)
-
-							while not queue.empty():
-								item = queue.get()
-								if not item.terminate:
-									syslog.syslog(syslog.LOG_ERR, "Could not execute query: %s" % item.query)
-
-							raise
-
-						time.sleep(1)
-
+	def disconnect(self):
+		if self.conn:
 			try:
-				with contextlib.closing(conn.cursor()) as cursor:
-					cursor.execute(item.query)
-					ok = True
-					break
-			except Exception as e:
-				syslog.syslog(syslog.LOG_ERR, str(e))
-
-			try:
-				conn.close()
+				self.conn.close()
 			except:
 				pass
 
-			conn = None
+		self.conn = None
 
-		if ok:
-			stats.output.increment()
-		else:
-			stats.error.increment()
+	def execute(self):
+		while True:
+			item = self.queue.get()
+
+			if item.terminate:
+				syslog.syslog(syslog.LOG_INFO, "Terminated")
+				self.queue.task_done()
+				break
+
+			if self.execute_item(item):
+				self.stats.output.increment()
+			else:
+				self.stats.error.increment()
+				syslog.syslog(syslog.LOG_ERR, "Could not execute query: %s" % item.query)
+
+			self.queue.task_done()
+
+		self.disconnect()
+
+	def execute_item(self, item):
+		assert item.database == self.params["db"]
+
+		for i in xrange(2):
+			while not self.connected:
+				try:
+					self.connect()
+					break
+
+				except Exception as e:
+					syslog.syslog(syslog.LOG_ERR, str(e))
+
+					if self.signaler.user_insists:
+						syslog.syslog(syslog.LOG_INFO, "Giving up due to persistent user")
+						self.drain_queue(item)
+						raise
+
+				time.sleep(1)
+
+			try:
+				with contextlib.closing(self.conn.cursor()) as cursor:
+					cursor.execute(item.query)
+					return True
+
+			except Exception as e:
+				syslog.syslog(syslog.LOG_ERR, str(e))
+
+			self.disconnect()
+
+		return False
+
+	def drain_queue(self, item):
+		while not item.terminate:
 			syslog.syslog(syslog.LOG_ERR, "Could not execute query: %s" % item.query)
-
-		queue.task_done()
-
-	if conn is not None:
-		try:
-			conn.close()
-		except Exception as e:
-			syslog.syslog(syslog.LOG_WARNING, e)
+			item = self.queue.get()
 
 class StatusServer(basehttpserver.HTTPServer):
 
@@ -295,11 +310,10 @@ def main():
 	syslog.openlog("insertbufferd")
 
 	queue = queuelib.Queue(args.maxsize)
-	conn = mysql.connect(**params)
 	stats = Stats()
-
 	listener = Listener(queue, args.address, stats)
 	signaler = Signaler(listener)
+	database = Database(params, queue, stats, signaler)
 
 	if args.status:
 		host, port = args.status.split(":", 1)
@@ -318,7 +332,7 @@ def main():
 
 	syslog.syslog(syslog.LOG_INFO, "Initialized")
 
-	insert(queue, conn, params, signaler, stats)
+	database.execute()
 
 if __name__ == "__main__":
 	main()
