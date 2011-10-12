@@ -190,7 +190,10 @@ class Database(object):
 		return self.conn is not None
 
 	def connect(self):
-		return mysql.connect(**self.params)
+		conn = mysql.connect(**self.params)
+		conn.autocommit(True)
+
+		self.conn = conn
 
 	def disconnect(self):
 		if self.conn:
